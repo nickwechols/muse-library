@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Muse Library</title>
+  <meta name="theme-color" content="#f3f3f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141415" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/vendor/phosphor/regular.css">
+  <link rel="stylesheet" href="/vendor/phosphor/fill.css">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <!-- Sign in -->
+  <div class="gate" id="gate" hidden>
+    <form class="gate-card raised" id="gateForm">
+      <div class="brand"><span class="brand-mark"><i class="ph-fill ph-bookmark-simple"></i></span><span>Muse Library</span></div>
+      <p class="gate-intro" id="gateIntro" hidden>Create a password for your library. You'll use it to sign in on any device.</p>
+      <label class="field">
+        <span class="label" id="gateLabel">Password</span>
+        <input class="well" id="gateKey" type="password" autocomplete="current-password" required minlength="6">
+        <span class="help" id="gateError" role="alert"></span>
+      </label>
+      <button class="btn btn-accent" type="submit" id="gateBtn">Open library</button>
+    </form>
+  </div>
+
+  <div class="app" id="app" hidden>
+    <!-- Sidebar -->
+    <aside class="side" id="side" aria-label="Library navigation">
+      <div class="side-head">
+        <div class="brand"><span class="brand-mark"><i class="ph-fill ph-bookmark-simple"></i></span><span>Muse Library</span></div>
+        <button class="icon-btn only-mobile" id="sideClose" aria-label="Close menu"><i class="ph ph-x"></i></button>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item" data-view="inbox" data-drop=""><i class="ph ph-tray"></i><span>Inbox</span><em data-count="inbox"></em></button>
+        <button class="nav-item" data-view="all"><i class="ph ph-squares-four"></i><span>Everything</span><em data-count="all"></em></button>
+        <button class="nav-item" data-view="starred"><i class="ph ph-star"></i><span>Starred</span><em data-count="starred"></em></button>
+      </nav>
+
+      <div class="nav-group">
+        <div class="nav-title">Type</div>
+        <button class="nav-item" data-view="type:video"><i class="ph ph-film-strip"></i><span>Reels &amp; video</span><em data-count="type:video"></em></button>
+        <button class="nav-item" data-view="type:image"><i class="ph ph-image"></i><span>Photos</span><em data-count="type:image"></em></button>
+      </div>
+
+      <div class="nav-group grow">
+        <div class="nav-title">Folders <button class="icon-btn sm" id="newFolder" aria-label="New folder"><i class="ph ph-plus"></i></button></div>
+        <div id="folderList" class="folder-list"></div>
+      </div>
+
+      <div class="side-foot">
+        <button class="muse-status" id="museStatus" title="Connect Muse"><i class="ph ph-robot"></i><span>Connect Muse</span></button>
+        <div class="side-actions">
+          <button class="icon-btn" id="themeBtn" aria-label="Toggle theme"><i class="ph ph-circle-half"></i></button>
+          <button class="icon-btn" id="logoutBtn" aria-label="Sign out"><i class="ph ph-sign-out"></i></button>
+        </div>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <!-- Main -->
+    <main class="main">
+      <header class="top">
+        <button class="icon-btn only-mobile" id="menuBtn" aria-label="Open menu"><i class="ph ph-list"></i></button>
+        <div class="top-title">
+          <h1 id="viewTitle">Inbox</h1>
+          <span class="count" id="viewCount"></span>
+        </div>
+        <label class="search well">
+          <i class="ph ph-magnifying-glass"></i>
+          <input id="search" type="search" placeholder="Search scripts, captions, notes" aria-label="Search">
+          <kbd class="only-desktop">/</kbd>
+        </label>
+        <div class="top-actions">
+          <div class="mode" role="group" aria-label="Layout">
+            <button class="mode-btn" data-mode="grid" aria-pressed="true" title="Grid"><i class="ph ph-squares-four"></i><span class="sr">Grid</span></button>
+            <button class="mode-btn" data-mode="scripts" aria-pressed="false" title="Scripts"><i class="ph ph-text-align-left"></i><span class="sr">Scripts</span></button>
+          </div>
+          <div class="seg raised-flat" role="group" aria-label="Sort">
+            <button class="seg-btn" data-sort="new" aria-pressed="true">Newest</button>
+            <button class="seg-btn" data-sort="old" aria-pressed="false">Oldest</button>
+          </div>
+          <button class="btn" id="selectBtn"><i class="ph ph-check-square"></i><span>Select</span></button>
+          <button class="btn btn-accent" id="addBtn"><i class="ph ph-plus"></i><span>Add link</span></button>
+        </div>
+      </header>
+
+      <div class="banner" id="persistBanner" hidden><i class="ph ph-warning"></i><span>Storage isn't attached, so saves will be lost on the next deploy. In Railway, add a Volume to this service.</span></div>
+      <div class="scripts-bar" id="scriptsBar" hidden>
+        <p id="scriptsInfo"></p>
+        <div class="scripts-bar-actions">
+          <button class="btn" id="downloadScripts"><i class="ph ph-download-simple"></i><span>Download .txt</span></button>
+          <button class="btn btn-accent" id="copyScripts"><i class="ph ph-copy"></i><span>Copy all scripts</span></button>
+        </div>
+      </div>
+      <section class="grid" id="grid" aria-live="polite"></section>
+      <section class="scripts" id="scripts" hidden></section>
+      <div class="empty" id="empty" hidden></div>
+    </main>
+
+    <!-- Detail -->
+    <aside class="drawer" id="drawer" aria-label="Item details" hidden>
+      <div class="drawer-inner">
+        <div class="drawer-head">
+          <button class="icon-btn" id="drawerClose" aria-label="Close"><i class="ph ph-x"></i></button>
+          <div class="drawer-head-actions">
+            <button class="icon-btn" id="dStar" aria-label="Star"><i class="ph ph-star"></i></button>
+            <button class="icon-btn" id="dRefresh" aria-label="Refresh preview"><i class="ph ph-arrows-clockwise"></i></button>
+            <button class="icon-btn danger" id="dDelete" aria-label="Delete"><i class="ph ph-trash"></i></button>
+            <a class="btn" id="dOpen" target="_blank" rel="noopener"><i class="ph ph-arrow-square-out"></i><span>Open</span></a>
+          </div>
+        </div>
+        <div class="drawer-body">
+          <div class="media-frame" id="dMedia"></div>
+          <div class="d-meta">
+            <a class="d-author" id="dAuthor" target="_blank" rel="noopener"></a>
+            <span class="d-date" id="dDate"></span>
+          </div>
+          <p class="d-caption" id="dCaption"></p>
+
+          <div class="org">
+            <div class="org-row">
+              <span class="org-label">Folder</span>
+              <div class="select well sm"><select id="dFolder" aria-label="Folder"></select><i class="ph ph-caret-up-down"></i></div>
+            </div>
+            <div class="org-row">
+              <span class="org-label" id="tagsLabel">Tags</span>
+              <div class="tags" id="dTags" aria-labelledby="tagsLabel">
+                <input id="dTagInput" placeholder="Add tag" aria-label="Add tag">
+              </div>
+            </div>
+          </div>
+
+          <section class="rbox" data-box="transcript" aria-label="Script">
+            <div class="rbox-head">
+              <h3>Script</h3>
+              <span class="rbox-meta"></span>
+              <button class="icon-btn sm" data-box-edit aria-label="Edit script" title="Edit"><i class="ph ph-pencil-simple"></i></button>
+              <button class="btn btn-sm" data-box-copy><i class="ph ph-copy"></i><span>Copy</span></button>
+            </div>
+            <div class="rbox-read"></div>
+            <textarea class="well rbox-input" rows="10" placeholder="Paste or type the script" hidden></textarea>
+          </section>
+
+          <section class="rbox" data-box="summary" aria-label="Breakdown">
+            <div class="rbox-head">
+              <h3>Breakdown</h3>
+              <span class="rbox-meta"></span>
+              <button class="icon-btn sm" data-box-edit aria-label="Edit breakdown" title="Edit"><i class="ph ph-pencil-simple"></i></button>
+              <button class="btn btn-sm" data-box-copy><i class="ph ph-copy"></i><span>Copy</span></button>
+            </div>
+            <div class="rbox-read"></div>
+            <textarea class="well rbox-input" rows="7" placeholder="Hook, format, structure, why it works, what to steal" hidden></textarea>
+          </section>
+
+          <label class="field notes-field">
+            <span class="rbox-head"><h3>Your notes</h3><span class="rbox-meta" id="notesSaved"></span></span>
+            <textarea class="well" id="dNotes" rows="4" placeholder="What you'd steal, shot ideas, when to use it"></textarea>
+          </label>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Selection bar -->
+    <div class="selbar raised" id="selbar" hidden>
+      <span id="selCount">0 selected</span>
+      <div class="select well sm"><select id="selMove" aria-label="Move selected to"></select><i class="ph ph-caret-up-down"></i></div>
+      <button class="icon-btn danger" id="selDelete" aria-label="Delete selected"><i class="ph ph-trash"></i></button>
+      <button class="btn" id="selDone">Done</button>
+    </div>
+  </div>
+
+  <!-- Dialog -->
+  <dialog class="dialog raised" id="dialog">
+    <form method="dialog" id="dialogForm">
+      <h2 id="dialogTitle"></h2>
+      <label class="field">
+        <span class="label" id="dialogLabel"></span>
+        <input class="well" id="dialogInput" required>
+        <span class="help" id="dialogHelp"></span>
+      </label>
+      <div class="dialog-actions">
+        <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn btn-accent" value="ok" id="dialogOk">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Connect Muse -->
+  <dialog class="dialog raised connect" id="connect">
+    <div class="connect-head">
+      <h2>Connect Muse</h2>
+      <button class="icon-btn" id="connectClose" aria-label="Close"><i class="ph ph-x"></i></button>
+    </div>
+    <div class="warn" id="connectWarn" hidden><i class="ph ph-warning"></i><span>No storage volume is attached in Railway, so saves will be wiped on the next deploy. Add a volume to this service (any mount path) and redeploy.</span></div>
+    <p class="connect-sub">Copy this and send it to Muse once. After that, every reel you send Muse lands in your Inbox.</p>
+    <pre class="well connect-msg" id="connectMsg"></pre>
+    <div class="dialog-actions">
+      <button class="btn" id="connectRotate"><i class="ph ph-arrows-clockwise"></i><span>New Muse key</span></button>
+      <button class="btn btn-accent" id="connectCopy"><i class="ph ph-copy"></i><span>Copy for Muse</span></button>
+    </div>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

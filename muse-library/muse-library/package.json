@@ -1,0 +1,15 @@
+{
+  "name": "muse-library",
+  "version": "1.0.0",
+  "description": "A shared library for Instagram reels and posts that Muse collects and you sort.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
