@@ -7,6 +7,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { validate } from './ingest.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -36,7 +37,7 @@ function loadDb() {
   return null;
 }
 let db = loadDb() || { rev: 1, folders: [], items: [] };
-db.folders ||= []; db.items ||= []; db.rev ||= 1;
+db.folders ||= []; db.items ||= []; db.feed ||= []; db.rev ||= 1;
 let saveTimer = null, writing = Promise.resolve(), dirty = false;
 function writeNow() {
   dirty = false;
@@ -80,7 +81,8 @@ const S = db.settings;
 if (!S.secret) S.secret = crypto.randomBytes(32).toString('hex');
 if (!S.muse_key) S.muse_key = 'muse_' + crypto.randomBytes(18).toString('base64url');
 commit();
-const museKey = () => process.env.MUSE_KEY || S.muse_key;
+// The ingest bearer token. Set INGEST_TOKEN at deploy time, or use the generated one shown in the app.
+const museKey = () => process.env.INGEST_TOKEN || process.env.MUSE_KEY || S.muse_key;
 const hasOwner = () => !!(process.env.OWNER_KEY || S.owner_hash);
 const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 32).toString('hex');
 const safeEq = (a, b) => {
@@ -122,10 +124,13 @@ function send(res, status, body, headers = {}) {
   });
   res.end(isObj ? JSON.stringify(body) : body);
 }
-async function readBody(req, limit = 20 * 1024 * 1024) {
+async function readRaw(req, limit) {
   const chunks = []; let size = 0;
-  for await (const c of req) { size += c.length; if (size > limit) throw new Error('Body too large'); chunks.push(c); }
-  const raw = Buffer.concat(chunks).toString('utf8');
+  for await (const c of req) { size += c.length; if (size > limit) throw Object.assign(new Error('Body too large'), { code: 413 }); chunks.push(c); }
+  return Buffer.concat(chunks).toString('utf8');
+}
+async function readBody(req, limit = 20 * 1024 * 1024) {
+  const raw = await readRaw(req, limit);
   if (!raw) return {};
   const type = req.headers['content-type'] || '';
   if (type.includes('application/x-www-form-urlencoded')) return Object.fromEntries(new URLSearchParams(raw));
@@ -295,7 +300,7 @@ async function ingest(body, who) {
       id: uid(), ...parsed,
       media: parsed.kind === 'reel' ? 'video' : parsed.kind === 'post' ? 'image' : 'link',
       author: null, caption: null, title: null, thumb: null,
-      folder_id: null, tags: [], notes: '', summary: '', starred: false,
+      folder_id: null, tags: [], notes: '', summary: '', transcript: '', hook: '', starred: false,
       added_by: who, created_at: now(), updated_at: now(), status: 'pending',
     };
     db.items.unshift(item);
@@ -303,7 +308,10 @@ async function ingest(body, who) {
   if (body.author) item.author = clip(body.author, 80).replace(/^@/, '');
   if (body.caption) item.caption = clip(body.caption, 5000);
   if (body.title) item.title = clip(body.title, 300);
-  if (body.summary) item.summary = clip(body.summary, 20000);
+  if (body.summary || body.breakdown) item.summary = clip(body.summary || body.breakdown, 20000);
+  const script = body.transcript || body.script;
+  if (script) item.transcript = clip(String(script).replace(/\r\n?/g, '\n').trim(), 60000);
+  if (body.hook) item.hook = clip(String(body.hook).trim(), 400);
   if (body.note || body.notes) item.notes = [item.notes, body.note || body.notes].filter(Boolean).join('\n\n');
   if (body.tags) item.tags = cleanTags([...item.tags, ...cleanTags(body.tags)]);
   if (body.folder) item.folder_id = findOrCreateFolder(body.folder);
@@ -315,6 +323,42 @@ async function ingest(body, who) {
     enqueue(item, { thumbnail_url: body.thumbnail_url, image_base64: body.image_base64 });
   }
   return [duplicate ? 200 : 201, { ok: true, duplicate, item }];
+}
+
+// ---------- ingest contract storage ----------
+// Feed records (briefing, package_update, email_alert, digest) are keyed by type + id.
+// Library items map onto the library, keyed by their id (or URL for older items).
+function upsertFeed(v) {
+  const key = `${v.type}:${v.id}`;
+  const i = db.feed.findIndex(r => r.key === key);
+  const prev = i >= 0 ? db.feed[i] : null;
+  const rec = { key, ...v, received_at: prev?.received_at || now(), updated_at: now(), read: prev ? prev.read && !(v.type === 'email_alert' && v.needs_reply && !prev.needs_reply) : false };
+  if (prev) db.feed[i] = rec; else db.feed.push(rec);
+  commit();
+  return { created: !prev };
+}
+function upsertLibrary(v) {
+  const parsed = parseUrl(v.url);
+  let item = db.items.find(i => i.ext_id === v.id) || db.items.find(i => i.url === parsed.url);
+  const created = !item;
+  if (!item) {
+    item = {
+      id: uid(), ...parsed, media: parsed.kind === 'reel' ? 'video' : parsed.kind === 'post' ? 'image' : 'link',
+      caption: null, thumb: null, folder_id: null, tags: [], notes: '', starred: false,
+      added_by: 'muse', created_at: v.timestamp, status: 'pending',
+    };
+    db.items.unshift(item);
+  }
+  const userTags = (item.tags || []).filter(t => !(item.disk_tags || []).includes(t));
+  Object.assign(item, {
+    ext_id: v.id, title: v.title, hook: v.hook, summary: v.summary,
+    transcript: v.transcript ?? item.transcript ?? '', author: v.author.replace(/^@/, '') || item.author || null,
+    disk_tags: v.tags, tags: [...new Set([...v.tags, ...userTags])], updated_at: now(),
+  });
+  if (!item.folder_locked && v.folder.trim()) item.folder_id = findOrCreateFolder(v.folder);
+  commit();
+  if (created || !item.thumb || v.thumbnail_url) { item.attempts = 0; enqueue(item, { thumbnail_url: v.thumbnail_url }); }
+  return { created };
 }
 
 // ---------- routes ----------
@@ -342,6 +386,25 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/health') return send(res, 200, { ok: true, items: db.items.length, persistent: PERSISTENT, queue: queue.size + running });
 
+    // Machine write API. Bearer token only; JSON in, JSON out; no rate limit.
+    if (p === '/api/ingest' && req.method === 'POST') {
+      const reply = (status, body) => send(res, status, body, { 'Access-Control-Allow-Origin': '*' });
+      const m = (req.headers.authorization || '').match(/^Bearer\s+(\S+)\s*$/i);
+      if (!m) return reply(401, { ok: false, error: 'Missing "Authorization: Bearer <token>" header.' });
+      if (!safeEq(m[1], museKey())) return reply(401, { ok: false, error: 'Bearer token is not valid.' });
+      let raw;
+      try { raw = await readRaw(req, 8 * 1024 * 1024); } catch { return reply(413, { ok: false, error: 'Body is larger than 8 MB.' }); }
+      let body;
+      try { body = JSON.parse(raw); } catch (e) { return reply(400, { ok: false, error: `Body is not valid JSON (${e.message}).` }); }
+      const v = validate(body);
+      if (!v.ok) return reply(422, { ok: false, error: v.error, field: v.field });
+      const r = v.value.type === 'library_item' ? upsertLibrary(v.value) : upsertFeed(v.value);
+      return reply(200, { ok: true, id: v.value.id, type: v.value.type, created: r.created });
+    }
+    if (p === '/DATA_CONTRACT.md') {
+      const md = await fsp.readFile(path.join(__dirname, 'DATA_CONTRACT.md'), 'utf8').catch(() => '');
+      return send(res, md ? 200 : 404, md || 'Not found', { 'Content-Type': 'text/markdown; charset=utf-8' });
+    }
     if (p === '/api/setup-status') return send(res, 200, { needsSetup: !hasOwner(), persistent: PERSISTENT });
     if (p === '/api/setup' && req.method === 'POST') {
       if (hasOwner()) return send(res, 409, { error: 'A password is already set.' });
@@ -389,7 +452,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/muse' && who === 'you') {
         const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0];
         const base = `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`;
-        return send(res, 200, { base, key: museKey(), persistent: PERSISTENT });
+        return send(res, 200, { base, key: museKey(), persistent: PERSISTENT, fixed: !!(process.env.INGEST_TOKEN || process.env.MUSE_KEY) });
       }
       if (p === '/api/muse/rotate' && req.method === 'POST' && who === 'you') {
         S.muse_key = 'muse_' + crypto.randomBytes(18).toString('base64url'); commit();
@@ -401,9 +464,18 @@ const server = http.createServer(async (req, res) => {
         if (q.get('folder')) items = items.filter(i => i.folder_id === q.get('folder') || db.folders.find(f => f.id === i.folder_id)?.name === q.get('folder'));
         if (q.get('unsorted') === '1') items = items.filter(i => !i.folder_id);
         if (q.get('limit')) items = items.slice(0, Number(q.get('limit')));
-        return send(res, 200, { rev: db.rev, me: who, folders: [...db.folders].sort((a, b) => a.order - b.order), items });
+        return send(res, 200, { rev: db.rev, me: who, folders: [...db.folders].sort((a, b) => a.order - b.order), items, feed: db.feed });
       }
 
+      const feedM = p.match(/^\/api\/feed\/(.+)$/);
+      if (feedM && req.method === 'PATCH') {
+        const b = await readBody(req);
+        const keys = feedM[1] === 'read-all' ? db.feed.filter(r => (b.type ? r.type === b.type : true)).map(r => r.key) : [decodeURIComponent(feedM[1])];
+        let n = 0;
+        for (const k of keys) { const r = db.feed.find(x => x.key === k); if (r) { r.read = b.read !== false; n++; } }
+        if (!n && feedM[1] !== 'read-all') return send(res, 404, { error: 'No such record' });
+        commit(); return send(res, 200, { ok: true, count: n });
+      }
       const itemM = p.match(/^\/api\/items\/([\w-]+)(\/refresh)?$/);
       if (itemM) {
         const item = db.items.find(i => i.id === itemM[1]);
@@ -420,7 +492,10 @@ const server = http.createServer(async (req, res) => {
           const b = await readBody(req);
           if ('folder_id' in b) item.folder_id = b.folder_id && db.folders.some(f => f.id === b.folder_id) ? b.folder_id : null;
           if ('folder' in b) item.folder_id = findOrCreateFolder(b.folder);
+          if (('folder_id' in b || 'folder' in b) && who === 'you') item.folder_locked = true;
           for (const k of ['notes', 'summary', 'caption', 'author', 'title']) if (k in b) item[k] = clip(b[k], 20000);
+          if ('transcript' in b || 'script' in b) item.transcript = clip(b.transcript ?? b.script, 60000);
+          if ('hook' in b) item.hook = clip(b.hook, 400);
           if ('starred' in b) item.starred = !!b.starred;
           if ('tags' in b) item.tags = cleanTags(b.tags);
           item.updated_at = now(); commit();
@@ -443,12 +518,17 @@ const server = http.createServer(async (req, res) => {
           targets.forEach(i => i.thumb && fsp.unlink(path.join(MEDIA_DIR, path.basename(i.thumb.split('?')[0]))).catch(() => {}));
         } else {
           const fid = b.folder_id && db.folders.some(f => f.id === b.folder_id) ? b.folder_id : null;
-          targets.forEach(i => { i.folder_id = fid; i.updated_at = now(); });
+          targets.forEach(i => { i.folder_id = fid; i.folder_locked = true; i.updated_at = now(); });
         }
         commit();
         return send(res, 200, { ok: true, count: targets.length });
       }
 
+      if (p === '/api/folders' && req.method === 'GET') {
+        const folders = [...db.folders].sort((a, b) => a.order - b.order)
+          .map(f => ({ id: f.id, name: f.name, count: db.items.filter(i => i.folder_id === f.id).length }));
+        return send(res, 200, { folders }, { 'Access-Control-Allow-Origin': '*' });
+      }
       if (p === '/api/folders' && req.method === 'POST') {
         const { name } = await readBody(req);
         if (!String(name || '').trim()) return send(res, 400, { error: 'Folder needs a name' });

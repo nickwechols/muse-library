@@ -1,38 +1,38 @@
-# Muse Library
+# Disk
 
-Your Instagram saves, collected by Muse and sorted by you.
+A private command center for what Disk (your AI assistant) produces: morning briefings, email alerts, package tracking, digests, and an Instagram reference library. Disk writes to it over HTTP; you read it on your phone or computer.
 
-## Setup (about 10 minutes, no code, no settings to type)
+- **Today:** packages, the latest briefing, unread email, recent saves.
+- **Library:** folders, search, hooks, breakdowns, transcripts, notes, copy all transcripts.
+- **Activity:** everything Disk has sent, newest first, expandable.
 
-**1. Put it on GitHub**
-1. Go to github.com and click **New repository**. Name it `muse-library`, choose **Private**, click **Create**.
-2. Click **uploading an existing file**.
-3. Open this folder, select everything inside it, and drag it into the page. Click **Commit changes**.
+Disk's write API is documented in [DATA_CONTRACT.md](DATA_CONTRACT.md) (also served live at `/DATA_CONTRACT.md`).
 
-**2. Deploy on Railway**
-1. Go to railway.com and sign in with GitHub.
-2. Click **New Project**, then **Deploy from GitHub repo**, then pick `muse-library`. Allow access if asked.
-3. When the service box appears, right-click it (or press Cmd/Ctrl+K), choose **Add Volume**. Any mount path works, `/data` is fine. This is the storage that keeps your saves.
-4. Click the service, open **Settings**, scroll to **Networking**, click **Generate Domain**.
+## Deploy (Railway)
 
-**3. Open it**
-1. Visit your new domain. Create a password. That's your login on every device.
-2. A **Connect Muse** window opens. Click **Copy for Muse** and paste it to Muse.
-3. Send Muse a reel. It shows up in your Inbox within a few seconds.
+1. Push this folder to GitHub and deploy it on Railway. No build step, no dependencies.
+2. Attach a **Volume** to the service (any mount path). Data lives there.
+3. Optional but recommended: add a variable `INGEST_TOKEN` with a long random secret. That is the bearer token Disk uses. Without it, the site generates one for you.
+4. Generate a domain, open it, and create your password.
+5. Click the plug icon, copy the message, and send it to Disk privately.
 
-On your phone: open the site in Safari, tap Share, then **Add to Home Screen**.
+Make a token with: `openssl rand -base64 32`
 
-## Good to know
-- **Cost:** Railway's trial is free. To keep it running all month, the Hobby plan is $5/month.
-- **Backups:** your library keeps a backup copy plus a daily snapshot for 14 days in the volume. Download a full export any time at `/api/export` while signed in.
-- **New Muse key:** click Connect Muse in the bottom of the sidebar, then **New Muse key**. Send Muse the updated message.
-- **Missing preview:** some posts block previews. The post still saves. Open it and hit Refresh, or use Load embed. Failed previews also retry on their own a few times.
-- **Updates:** change files in GitHub and Railway redeploys automatically. Your saves are untouched.
-- **Shortcuts:** `/` search, `Esc` close, arrow keys step through posts, Cmd/Ctrl-click to select several, drag posts onto folders.
+## Environment variables (all optional)
 
-## Optional settings
-Nothing is required. If you want, these Railway variables override the defaults:
-`OWNER_KEY` (fixed password), `MUSE_KEY` (fixed Muse key), `DATA_DIR` (storage path).
+| Variable | Purpose |
+|---|---|
+| `INGEST_TOKEN` | Bearer token for `POST /api/ingest`. Overrides the generated one. |
+| `OWNER_KEY` | Fixed site password instead of the first-run setup. |
+| `DATA_DIR` | Storage folder. Railway volumes are detected automatically. |
 
-## Run on your own computer
-Install Node 20+, then in this folder run `node server.js` and open http://localhost:3000.
+## Data and backups
+
+Everything is stored in `db.json` on the volume, written atomically, with a `.bak` copy and 14 daily snapshots in `backups/`. `GET /api/export` (signed in) downloads a full JSON backup.
+
+## Run locally
+
+```
+INGEST_TOKEN=dev node server.js
+```
+Then open http://localhost:3000. Node 20+.
