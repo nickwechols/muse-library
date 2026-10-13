@@ -35,6 +35,7 @@
       <nav class="tabs" aria-label="Sections">
         <a class="tab" href="#/today" data-tab="today"><i class="ph ph-sun-horizon"></i><span>Today</span><em data-badge="today"></em></a>
         <a class="tab" href="#/library" data-tab="library"><i class="ph ph-books"></i><span>Library</span></a>
+        <a class="tab" href="#/news" data-tab="news"><i class="ph ph-newspaper"></i><span>News</span><em data-badge="news"></em></a>
         <a class="tab" href="#/activity" data-tab="activity"><i class="ph ph-pulse"></i><span>Activity</span></a>
       </nav>
       <div class="bar-end">
@@ -114,6 +115,16 @@
         <section class="scripts" id="scripts" hidden></section>
         <div class="empty" id="libEmpty" hidden></div>
       </section>
+    </main>
+
+    <!-- News -->
+    <main class="view news" id="view-news" data-view="news" hidden>
+      <div class="act-head">
+        <h1>News</h1>
+        <div class="chips" id="newsFilters" role="group" aria-label="Filter stories"></div>
+      </div>
+      <div class="news-feed" id="newsFeed"></div>
+      <div class="empty" id="newsEmpty" hidden></div>
     </main>
 
     <!-- Activity -->

@@ -238,7 +238,7 @@ function route() {
   const arg = rest.join('/');
   let sheet = null, item = null;
   if (head === 'r' || head === 'p') sheet = { kind: head, key: decodeURIComponent(arg) };
-  else if (['today', 'library', 'activity'].includes(head)) {
+  else if (['today', 'library', 'news', 'activity'].includes(head)) {
     S.tab = head;
     if (head === 'library' && arg) item = arg;
     if (head === 'activity' && arg && KIND[arg]) S.act = arg;
@@ -255,7 +255,9 @@ function renderTabs() {
   $$('.view').forEach(v => { v.hidden = v.dataset.view !== S.tab; });
   const n = unreadMail().length;
   $('[data-badge="today"]').textContent = n ? (n > 9 ? '9+' : n) : '';
-  document.title = `${{ today: 'Today', library: libTitle(), activity: 'Activity' }[S.tab]} - Disk`;
+  const fresh = newsBadge();
+  $('[data-badge="news"]').textContent = fresh ? String(fresh) : '';
+  document.title = `${{ today: 'Today', library: libTitle(), news: 'News', activity: 'Activity' }[S.tab]} - Disk`;
 }
 let lastTab = null;
 function renderView() {
@@ -263,6 +265,7 @@ function renderView() {
   if (S.tab === 'today') renderToday();
   if (S.tab === 'library') renderLibrary();
   if (S.tab === 'activity') renderActivity();
+  if (S.tab === 'news') renderNews();
   if (lastTab !== S.tab) { window.scrollTo({ top: 0 }); lastTab = S.tab; }
 }
 
@@ -389,6 +392,114 @@ async function markRead(keys, read = true) {
   try { for (const k of keys) await api(`/api/feed/${encodeURIComponent(k)}`, { method: 'PATCH', body: { read } }); } catch (e) { console.warn(e); }
 }
 function syncScrim() { $('#scrim').classList.toggle('open', !$('#sheet').hidden || !$('#drawer').hidden); }
+
+// =====================================================================
+// News: daily digests with id "news-YYYY-MM-DD", one section per story
+// =====================================================================
+const NEWS_CATS = {
+  fashion: ['fashion', 'runway', 'collection', 'lookbook', 'designer', 'streetwear', 'denim', 'selvedge', 'sneaker', 'collab', 'vogue', 'gq', 'hypebeast', 'heddels'],
+  business: ['startup', 'funding', 'launch', 'brand', 'retail', 'ecommerce', 'shopify', 'tariff', 'manufacturing', 'factory', 'dtc'],
+  culture: ['music', 'film', 'art', 'tech', 'internet', 'culture'],
+};
+// whole words plus simple plurals and verb forms; "collab" also matches collaboration
+const NEWS_RE = Object.fromEntries(Object.entries(NEWS_CATS).map(([k, words]) =>
+  [k, new RegExp(`\\b(?:${words.map(w => w === 'collab' ? 'collab\\w*' : w + '(?:s|es|ed|ing)?').join('|')})\\b`, 'i')]));
+const NEWS_FILTERS = [['all', 'All'], ['fashion', 'Fashion'], ['business', 'Business'], ['culture', 'Culture']];
+S.news = 'all';
+const openStories = new Set();
+
+const localDate = d => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+const newsDate = r => (r.id.match(/^news-(\d{4}-\d{2}-\d{2})/) || [])[1] || localDate(r.timestamp);
+const newsDigests = () => S.feed.filter(r => r.type === 'digest' && /^news-/.test(r.id))
+  .sort((a, b) => newsDate(b).localeCompare(newsDate(a)) || byTime(a, b)).slice(0, 7);
+
+function parseStory(sec, n, digest) {
+  const raw = String(sec.body || '').replace(/\r\n?/g, '\n');
+  const srcM = raw.match(/^\s*[_*]([^_*\n]+)[_*]\s*$/m);
+  const whyM = raw.match(/^\s*\*\*\s*why it matters\s*:?\s*\*\*\s*:?\s*(.+)$/im);
+  const links = [...raw.matchAll(/\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g)];
+  const linkLine = links.length ? links[links.length - 1] : null;
+  let rest = raw;
+  if (srcM) rest = rest.replace(srcM[0], '');
+  if (whyM) rest = rest.replace(whyM[0], '');
+  if (linkLine) rest = rest.split('\n').filter(l => l.trim() !== linkLine[0]).join('\n');
+  const [source, time] = (srcM ? srcM[1] : '').split(/\s+·\s+/);
+  const structured = !!(srcM || whyM || linkLine);
+  return {
+    key: `${digest.key}#${n}`, headline: sec.heading, source: (source || '').trim(), time: (time || '').trim(),
+    summary: structured ? rest.trim() : raw.trim(), why: whyM ? whyM[1].trim() : '', url: linkLine ? linkLine[2] : '',
+    structured, hay: `${sec.heading} ${raw}`,
+  };
+}
+const storyMatches = st => S.news === 'all' || NEWS_RE[S.news].test(st.hay);
+function newsBadge() {
+  const today = newsDigests().find(d => newsDate(d) === localDate(Date.now()));
+  if (!today || store.get('dk.newsSeen', '') === today.id) return 0;
+  return (today.sections || []).length;
+}
+function newsTitle(d) { return String(d.title || '').replace(/^\s*news\s*[\u2014\u2013:|-]\s*/i, '').trim() || d.title; }
+const ext = url => url ? ` href="${esc(url)}" target="_blank" rel="noopener noreferrer"` : '';
+function storyMeta(st, isNew) {
+  return `<span class="story-meta">${isNew ? '<span class="tag-new">New</span>' : ''}${st.source ? `<span class="story-src">${esc(st.source)}</span>` : ''}${st.time ? `<span>${esc(st.time)}</span>` : ''}</span>`;
+}
+function heroHTML(st, isNew) {
+  return `<article class="news-hero">
+    ${storyMeta(st, isNew)}
+    <h3>${st.url ? `<a${ext(st.url)}>${esc(st.headline)}</a>` : esc(st.headline)}</h3>
+    ${st.summary ? `<div class="md news-sum">${md(st.summary)}</div>` : ''}
+    ${st.why ? `<p class="why"><strong>Why it matters</strong>${inl(st.why)}</p>` : ''}
+    ${st.url ? `<a class="link-btn news-more"${ext(st.url)}>Read more<i class="ph ph-arrow-up-right"></i></a>` : ''}
+  </article>`;
+}
+function rowHTML(st, isNew) {
+  const open = openStories.has(st.key);
+  return `<article class="story${open ? ' open' : ''}">
+    <button class="story-row" data-story="${esc(st.key)}" aria-expanded="${open}">
+      ${storyMeta(st, isNew)}
+      <span class="story-head">${esc(st.headline)}</span>
+      ${st.summary ? `<span class="story-sum">${esc(plain(st.summary))}</span>` : ''}
+      <i class="ph ph-caret-down story-caret"></i>
+    </button>
+    ${open ? `<div class="story-more">
+      ${st.why ? `<p class="why"><strong>Why it matters</strong>${inl(st.why)}</p>` : ''}
+      ${!st.structured ? `<div class="md">${md(st.summary)}</div>` : ''}
+      ${st.url ? `<a class="link-btn news-more"${ext(st.url)}>Read more<i class="ph ph-arrow-up-right"></i></a>` : ''}
+    </div>` : ''}
+  </article>`;
+}
+function renderNews() {
+  const days = newsDigests().map(d => ({ d, stories: (d.sections || []).map((s, n) => parseStory(s, n, d)) }));
+  const today = localDate(Date.now());
+  const todays = days.find(x => newsDate(x.d) === today);
+  if (todays) store.set('dk.newsSeen', todays.d.id);
+  $('[data-badge="news"]').textContent = '';
+
+  const all = days.flatMap(x => x.stories);
+  $('#newsFilters').innerHTML = days.length ? NEWS_FILTERS.map(([k, label]) => {
+    const n = k === 'all' ? all.length : all.filter(st => NEWS_RE[k].test(st.hay)).length;
+    return `<button class="chip" data-news="${k}" aria-pressed="${S.news === k}">${label}<em>${n}</em></button>`;
+  }).join('') : '';
+
+  let html = '', hero = false;
+  for (const { d, stories } of days) {
+    const shown = stories.filter(storyMatches);
+    if (!shown.length) continue;
+    const isNew = newsDate(d) === today;
+    let body = '';
+    if (!hero) { body += heroHTML(shown[0], isNew); hero = true; shown.shift(); }
+    if (shown.length) body += `<div class="news-list">${shown.map(st => rowHTML(st, isNew)).join('')}</div>`;
+    html += `<section class="news-day" aria-label="${esc(newsTitle(d))}">
+      <header class="news-day-head"><h2>${esc(newsTitle(d))}</h2>${d.body ? `<p>${inl(plain(d.body))}</p>` : ''}</header>
+      ${body}
+    </section>`;
+  }
+  $('#newsFeed').innerHTML = html;
+  const em = $('#newsEmpty');
+  em.hidden = !!html;
+  if (!html) em.innerHTML = days.length
+    ? `<i class="ph ph-funnel-simple"></i><h2>No ${esc(NEWS_FILTERS.find(f => f[0] === S.news)[1].toLowerCase())} stories this week</h2><p>Try another filter.</p>`
+    : `<i class="ph ph-newspaper"></i><h2>No news yet</h2><p>Tomorrow's stories land at 7 AM.</p>`;
+}
 
 // =====================================================================
 // Activity
@@ -716,6 +827,9 @@ document.addEventListener('click', e => {
   const push = t.closest('a[data-push]');
   if (push && !e.metaKey && !e.ctrlKey) { e.preventDefault(); return nav(push.getAttribute('href')); }
   const lib = t.closest('[data-lib]'); if (lib) return setLib(lib.dataset.lib);
+  const nf = t.closest('[data-news]'); if (nf) { S.news = nf.dataset.news; return renderNews(); }
+  const sr = t.closest('[data-story]');
+  if (sr) { const k = sr.dataset.story; openStories.has(k) ? openStories.delete(k) : openStories.add(k); return renderNews(); }
   const act = t.closest('[data-act]'); if (act) { S.act = act.dataset.act; history.replaceState(null, '', S.act === 'all' ? '#/activity' : `#/activity/${S.act}`); return renderActivity(); }
   const tog = t.closest('[data-toggle]');
   if (tog) {
@@ -852,7 +966,7 @@ document.addEventListener('keydown', e => {
     const next = list[idx + (e.key === 'ArrowRight' || e.key === 'j' ? 1 : -1)];
     if (next) { history.replaceState(null, '', `#/library/${next.id}`); route(); $(`.card[data-id="${next.id}"], .srow[data-row="${next.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   }
-  if (!typing && !e.metaKey && !e.ctrlKey && ['1', '2', '3'].includes(e.key)) location.hash = ['#/today', '#/library', '#/activity'][+e.key - 1];
+  if (!typing && !e.metaKey && !e.ctrlKey && ['1', '2', '3', '4'].includes(e.key)) location.hash = ['#/today', '#/library', '#/news', '#/activity'][+e.key - 1];
 });
 
 // =====================================================================

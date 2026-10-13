@@ -91,6 +91,21 @@ New alerts show as unread on Today until the owner opens them. Re-sending with `
 |---|---|---|
 | `title` | string | yes |
 | `body` | markdown, long-form, up to 500,000 chars | yes |
+| `sections` | array of `{"heading": string, "body": markdown}`, max 40 | no |
+
+#### Daily news digest
+
+The News tab shows digests whose `id` starts with `news-`. Send one per day with `id` `news-YYYY-MM-DD`, `body` set to a one-line theme, and one section per story. Each story body uses exactly this markdown:
+
+```
+_Source · 7:12 AM_
+
+Two-sentence summary of the story.
+
+**Why it matters:** one line on what it means for a one-man clothing brand.
+
+[Read more](https://example.com/article)
+```
 
 ## Examples
 

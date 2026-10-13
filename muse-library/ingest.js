@@ -23,7 +23,7 @@ export const TYPES = {
     from: ['str', true, 300], subject: ['str', true, 500], snippet: ['text', true, 20_000],
     thread_id: ['str', false, 300], needs_reply: ['bool', true],
   },
-  digest: { title: ['str', true, 300], body: ['text', true, 500_000] },
+  digest: { title: ['str', true, 300], body: ['text', true, 500_000], sections: ['sections', false] },
 };
 
 const typeOf = v => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v);
